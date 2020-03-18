@@ -1,0 +1,1878 @@
+diff --git a/drivers/char/Kconfig b/drivers/char/Kconfig
+index c28dca0..3f07612 100644
+--- a/drivers/char/Kconfig
++++ b/drivers/char/Kconfig
+@@ -378,6 +378,13 @@ config XILINX_HWICAP
+ 
+ 	  If unsure, say N.
+ 
++config MSP430_SBW
++	tristate "MSP430 SBW support"
++	depends on HAS_IOMEM
++	select GENERIC_IRQ_CHIP
++	help
++	  Choose this if you have a MSP430 with SBW inferface.
++
+ config R3964
+ 	tristate "Siemens R3964 line discipline"
+ 	depends on TTY
+@@ -589,4 +596,3 @@ config TILE_SROM
+ source "drivers/char/xillybus/Kconfig"
+ 
+ endmenu
+-
+diff --git a/drivers/char/MSP430_SBW/MSP430-SBW-system.h b/drivers/char/MSP430_SBW/MSP430-SBW-system.h
+new file mode 100644
+index 0000000..bcbb2aa
+--- /dev/null
++++ b/drivers/char/MSP430_SBW/MSP430-SBW-system.h
+@@ -0,0 +1,152 @@
++/*
++ *  MSP430_SBW_system.h -- Register definitions for MSP430_SBW implementation
++ *
++ *  Greg Smart
++ *
++ *  Version 0.1 11/11/15
++ *
++ */
++
++/*--------------------------------------------------------------------
++ *
++ *  MSP430_SBW register include file
++ *  This file contains all the macros and defines needed by the driver
++ *  and user programs using it.
++ *
++ *--------------------------------------------------------------------*/
++
++#ifndef _MSP430_SBW_SYSTEM_H
++#define _MSP430_SBW_SYSTEM_H
++
++/* general register memory location */
++#define R_MSP430_SBW_REG_BASE			0x0000
++
++// FPGA user read/write registers.
++// address decoder uses bits 5..2 => address offsets of 0x00..0x3C
++#define R_WRITE_ADDR		      0x0000
++#define R_READ_ADDR			   0x0000
++#define R_DIRECTION_ADDR	   0x0004
++#define R_READBACK_WR_ADDR    0x0008
++
++#define DEFAULT_OUTPUT_VAL    0x00000000
++#define DEFAULT_DIRECTION_VAL 0xffffffff
++
++
++/*
++ * interrupt constants
++ */
++#define K_ENABLE_INTERRUPT       0x01
++#define K_DISABLE_INTERRUPT      0x02
++#define K_CLEAR_INTERRUPT        0x03
++
++
++/*
++ *  struct MSP430_SBW_axi_lite_base.
++ *  This structure provides general access for the 3 blocks within the system
++ */
++
++struct MSP430_SBW_axi_lite_base {
++   u32                           registers[512];
++   u32                           fifo[512];
++   u32                           bram[1024];
++} ;
++
++/*
++ *  struct MSP430_SBW_registers.
++ *  This structure points to the first block where the registers are located
++ */
++
++struct MSP430_SBW_registers {
++   u32                           pulse_rate_gen;      // 0x0
++   u32                           pulse_width_gen;     // 0x4
++   u32                           sweep_test;          // 0x8
++   u32                           run_test;            // 0xC
++   u32                           data_read_addr;      // 0x10
++   u32                           data_read_stride;    // 0x14
++} ;
++
++#define MAX_DEVICES     4
++
++/**
++ * struct MSP430_SBW_drvdata - Device Configuration driver structure
++ *
++ * @dev: Pointer to the device structure
++ * @cdev: Instance of the cdev structure
++ * @devt: Pointer to the dev_t structure
++ * @class: Pointer to device class
++ * @fclk_class: Pointer to fclk device class
++ * @dma_done: The dma_done status bit for the DMA command completion
++ * @error_status: The error status captured during the DMA transfer
++ * @irq: Interrupt number
++ * @clk: Peripheral clock for devcfg
++ * @fclk: Array holding references to the FPGA clocks
++ * @fclk_exported: Flag inidcating whether an FPGA clock is exported
++ * @is_open: The status bit to indicate whether the device is opened
++ * @sem: Instance for the mutex
++ * @lock: Instance of spinlock
++ * @base_address: The virtual device base address of the device registers
++ * @is_partial_bitstream: Status bit to indicate partial/full bitstream
++ */
++struct MSP430_SBW_drvdata {
++   struct device *dev;
++   struct cdev cdev;
++   dev_t devt;
++   struct class *class;
++   int irq;
++   atomic_t irq_count;
++   struct clk *clk;
++   bool is_open;
++   spinlock_t lock;
++   void __iomem *base;
++   uint8_t tclkState;
++   struct list_head dev_list;
++   wait_queue_head_t irq_wait_queue;
++};
++
++static inline void MSP430_SBW_write_reg(struct MSP430_SBW_drvdata *MSP430_SBW, size_t reg, uint32_t val)
++{
++    writel(val, MSP430_SBW->base + reg);
++}
++
++static inline uint32_t MSP430_SBW_read_reg(struct MSP430_SBW_drvdata *MSP430_SBW, size_t reg)
++{
++    return readl(MSP430_SBW->base + reg);
++}
++
++
++//
++//
++//
++//
++//  Prototypes
++//
++//
++//
++//
++//
++
++//
++// MSP430_SBW_Open()
++//
++// Open MSP430_SBW system and mmap registers for user access.
++//
++// Returns pointer to virtual address.
++//
++u32 MSP430_SBW_Open(u32 init_fpga);
++
++//
++// MSP430_SBW_Close()
++//
++// Close MSP430_SBW system and unmap memory.  Function is called with
++// virtual address that was returned when opened.
++//
++u32 MSP430_SBW_Close(int fd);
++
++//
++// MSP430_SBW_Set_User_Mode()
++//
++// Setup the system configuration
++//
++int MSP430_SBW_Set_User_Mode(struct MSP430_SBW_drvdata *MSP430_SBW, void *user_ptr);
++
++#endif /* _MSP430_SBW_SYSTEM_H */
+diff --git a/drivers/char/MSP430_SBW/MSP430-SBW.c b/drivers/char/MSP430_SBW/MSP430-SBW.c
+new file mode 100644
+index 0000000..1f5cb61
+--- /dev/null
++++ b/drivers/char/MSP430_SBW/MSP430-SBW.c
+@@ -0,0 +1,345 @@
++/*
++ * Wrapper Driver used to control a two-channel Xilinx DMA Engine
++ */
++
++#include <linux/module.h>
++#include <linux/version.h>
++#include <linux/kernel.h>
++#include <linux/types.h>
++#include <linux/kdev_t.h>
++#include <linux/of.h>
++#include <linux/fs.h>
++#include <linux/device.h>
++#include <linux/cdev.h>
++#include <linux/clk.h>
++#include <linux/init.h>
++#include <linux/interrupt.h>
++#include <linux/delay.h>
++#include <linux/poll.h>
++#include <linux/dma-mapping.h>
++#include <linux/platform_device.h>
++#include <linux/time.h>
++
++#include "MSP430-SBW.h"
++#include "MSP430-SBW-system.h"
++#include "SBWLowLevel.h"
++
++#define DRIVER_NAME "MSP430-SBW"
++#define MODULE_NAME "MSP430-SBW"
++#define MSP430_SBW_DEVICES 4
++
++LIST_HEAD( MSP430_SBW_full_dev_list );
++
++
++static int MSP430_SBW_open(struct inode *i, struct file *filp)
++{
++   struct MSP430_SBW_drvdata *MSP430_SBW;
++
++   MSP430_SBW = container_of(i->i_cdev, struct MSP430_SBW_drvdata, cdev);
++
++   atomic_set(&MSP430_SBW->irq_count, 0);
++
++   //init_waitqueue_head(&MSP430_SBW->irq_wait_queue);
++
++//   printk(KERN_DEBUG "<%s> file: open()\n", MODULE_NAME);
++   filp->private_data = MSP430_SBW;
++   return 0;
++}
++
++static int MSP430_SBW_release(struct inode *i, struct file *f)
++{
++   struct MSP430_SBW_drvdata *MSP430_SBW;
++
++   MSP430_SBW = container_of(i->i_cdev, struct MSP430_SBW_drvdata, cdev);
++
++//   MSP430_SBW_write_reg(MSP430_SBW, R_INTERRUPT_ADDR, K_DISABLE_INTERRUPT);
++//   MSP430_SBW_write_reg(MSP430_SBW, R_MODE_CONFIG_ADDR, MODE_PPS_DEBUG);
++
++//   printk(KERN_DEBUG "<%s> file: close()\n", MODULE_NAME);
++   return 0;
++}
++
++
++static long MSP430_SBW_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
++{
++   struct MSP430_SBW_drvdata *MSP430_SBW = filp->private_data;
++   void  *arg_ptr = (void *)arg;
++   long  ret = 0;
++   unsigned int val;
++   struct MSP430_SBW_debug_struct debug_cmd;
++
++   //printk(KERN_DEBUG "<%s> ioctl: entered MSP430_SBW_ioctl\n", MODULE_NAME);
++
++   switch (cmd) {
++
++      case MSP430_SBW_USER_SETDIR:
++         MSP430_SBW_write_reg(MSP430_SBW, R_DIRECTION_ADDR, arg);
++         return 0;
++
++      case MSP430_SBW_USER_WRITE_OUTPUT:
++         MSP430_SBW_write_reg(MSP430_SBW, R_WRITE_ADDR, arg);
++         return 0;
++
++      case MSP430_SBW_USER_READ_INPUT:
++         val = MSP430_SBW_read_reg(MSP430_SBW, R_READ_ADDR);
++         if (copy_to_user(arg_ptr, &val, sizeof(val))) {
++            return -EFAULT;
++         }
++         return 0;
++
++      case MSP430_SBW_USER_READBACK_OUTPUT:
++         val = MSP430_SBW_read_reg(MSP430_SBW, R_READBACK_WR_ADDR);
++         if (copy_to_user(arg_ptr, &val, sizeof(val))) {
++            return -EFAULT;
++         }
++         return 0;
++
++      case MSP430_SBW_USER_REG_DEBUG:
++         if (copy_from_user(&debug_cmd, arg_ptr, sizeof(debug_cmd))) {
++            printk(KERN_DEBUG "MSP430_SBW_REG_DEBUG: copy failed\n");
++
++            return -EFAULT;
++         }
++
++         if (debug_cmd.cmd == MSP430_SBW_DEBUG_WRITE){
++            MSP430_SBW_write_reg(MSP430_SBW, debug_cmd.reg, debug_cmd.data);
++            return 0;
++         }
++
++         if (debug_cmd.cmd == MSP430_SBW_DEBUG_READ)
++            debug_cmd.data = MSP430_SBW_read_reg(MSP430_SBW, debug_cmd.reg);
++
++         if (copy_to_user(arg_ptr, &debug_cmd, sizeof(debug_cmd))) {
++            return -EFAULT;
++         }
++         return 0;
++
++      case MSP430_SBW_USER_RELEASE:
++         SBWRelease(MSP430_SBW);
++         return 0;
++
++      case MSP430_SBW_USER_RESETTAP:
++         SBWResetTAP(MSP430_SBW);
++         return 0;
++
++      case MSP430_SBW_USER_RESTART:
++         SBWRestart(MSP430_SBW);
++         return 0;
++
++      case MSP430_SBW_USER_START:
++         SBWStart(MSP430_SBW);
++         return 0;
++
++      case MSP430_SBW_USER_SHIFTIR:
++         val = SBWShiftIR(MSP430_SBW, arg);
++         if (copy_to_user(arg_ptr, &val, sizeof(val))) {
++            return -EFAULT;
++         }
++         return 0;
++
++      case MSP430_SBW_USER_SHIFTDR16:
++         val = SBWShiftDR16(MSP430_SBW, arg);
++         if (copy_to_user(arg_ptr, &val, sizeof(val))) {
++            return -EFAULT;
++         }
++         return 0;
++
++      case MSP430_SBW_USER_SHIFTDR20:
++         val = SBWShiftDR20(MSP430_SBW, arg);
++         if (copy_to_user(arg_ptr, &val, sizeof(val))) {
++            return -EFAULT;
++         }
++         return 0;
++
++      case MSP430_SBW_USER_TCLKHIGH:
++         SBWTCLKHigh(MSP430_SBW);
++         return 0;
++
++      case MSP430_SBW_USER_TCLKLOW:
++         SBWTCLKLow(MSP430_SBW);
++         return 0;
++
++      case MSP430_SBW_USER_UPDATEDR:
++         SBWUpdateDR(MSP430_SBW);
++         return 0;
++
++      default:
++	      break;
++
++   } // switch
++
++   return ret;
++}
++
++/**
++ * MSP430_SBW_isr() - The main interrupt handler.
++ * @irq:	The interrupt number.
++ * @data:	Pointer to the driver data structure.
++ * returns: IRQ_HANDLED after the interrupt is handled.
++ **/
++static irqreturn_t MSP430_SBW_isr(int irq, void *data)
++{
++	struct MSP430_SBW_drvdata *MSP = data;
++
++	spin_lock(&MSP->lock);
++
++	spin_unlock(&MSP->lock);
++
++	return IRQ_HANDLED;
++}
++
++static const struct file_operations MSP430_SBW_fops = {
++   .owner = THIS_MODULE,
++   .unlocked_ioctl = MSP430_SBW_ioctl,
++   .open = MSP430_SBW_open,
++   .release = MSP430_SBW_release,
++};
++
++static const struct of_device_id MSP430_SBW_of_match_table[] = {
++   { .compatible = "kutu,MSP430-SBW-controller-1.00-a", (void *)&MSP430_SBW_fops },
++   { },
++};
++MODULE_DEVICE_TABLE(of, MSP430_SBW_of_match_table);
++
++static int MSP430_SBW_probe(struct platform_device *pdev)
++{
++   const struct of_device_id *id;
++   struct resource *mem;
++   struct MSP430_SBW_drvdata *MSP430_SBW;
++   dev_t devt;
++   int ret;
++   struct device *dev;
++
++   if (!pdev->dev.of_node)
++      return -ENODEV;
++
++   id = of_match_node(MSP430_SBW_of_match_table, pdev->dev.of_node);
++   if (!id)
++      return -EINVAL;
++
++   MSP430_SBW = devm_kzalloc(&pdev->dev, sizeof(*MSP430_SBW), GFP_KERNEL);
++   if (!MSP430_SBW)
++      return -ENOMEM;
++
++   dev_info(&pdev->dev, "Kutu MSP430_SBW trying to call platform get resource\n");
++
++   mem = platform_get_resource(pdev, IORESOURCE_MEM, 0);
++   MSP430_SBW->base = devm_ioremap_resource(&pdev->dev, mem);
++
++   if (IS_ERR(MSP430_SBW->base))
++      return PTR_ERR(MSP430_SBW->base);
++
++   // setup registers
++   MSP430_SBW_write_reg(MSP430_SBW, R_WRITE_ADDR, DEFAULT_OUTPUT_VAL);
++   MSP430_SBW_write_reg(MSP430_SBW, R_DIRECTION_ADDR, DEFAULT_DIRECTION_VAL);
++
++   dev_info(&pdev->dev, "MSP430_SBW finished call to platform get resource\n");
++
++   dev_info(&pdev->dev, "MSP430_SBW trying to allocate irq\n");
++
++   MSP430_SBW->irq = platform_get_irq(pdev, 0);
++   ret = devm_request_irq(&pdev->dev, MSP430_SBW->irq, &MSP430_SBW_isr, 0, dev_name(&pdev->dev), MSP430_SBW);
++   if (ret) {
++      dev_err(&pdev->dev, "No IRQ available");
++      return ret;
++   }
++
++   dev_info(&pdev->dev, "MSP430_SBW successfully setup irq\n");
++
++   platform_set_drvdata(pdev, MSP430_SBW);
++   spin_lock_init(&MSP430_SBW->lock);
++
++   MSP430_SBW->is_open = 0;
++   dev_info(&pdev->dev, "ioremap %pa to %p\n", &mem->start, MSP430_SBW->base);
++
++   MSP430_SBW->clk = devm_clk_get(&pdev->dev, NULL);
++   if (IS_ERR(MSP430_SBW->clk)) {
++      ret = PTR_ERR(MSP430_SBW->clk);
++      goto failed5;
++   }
++   dev_info(&pdev->dev, "Successfully got device clock\n");
++   dev_info(&pdev->dev, "device clock rate is %ld\n", clk_get_rate(MSP430_SBW->clk));
++
++   //
++   // reset MSP430_SBW device
++   //
++
++   ret = alloc_chrdev_region(&devt, 0, MSP430_SBW_DEVICES, DRIVER_NAME);
++   if (ret < 0)
++      goto failed5;
++   dev_info(&pdev->dev, "Successfully allocated chrdev region\n");
++
++   MSP430_SBW->devt = devt;
++
++   cdev_init(&MSP430_SBW->cdev, &MSP430_SBW_fops);
++   MSP430_SBW->cdev.owner = THIS_MODULE;
++   ret = cdev_add(&MSP430_SBW->cdev, devt, 1);
++   if (ret) {
++      dev_err(&pdev->dev, "cdev_add() failed\n");
++      goto failed6;
++   }
++
++   MSP430_SBW->class = class_create(THIS_MODULE, DRIVER_NAME);
++   if (IS_ERR(MSP430_SBW->class)) {
++      dev_err(&pdev->dev, "failed to create class\n");
++      goto failed6;
++   }
++
++   dev = device_create(MSP430_SBW->class, &pdev->dev, devt, MSP430_SBW, DRIVER_NAME);
++   if (IS_ERR(dev)) {
++      dev_err(&pdev->dev, "unable to create device\n");
++      goto failed7;
++   }
++   dev_info(&pdev->dev, "Successfully created device\n");
++
++   init_waitqueue_head(&MSP430_SBW->irq_wait_queue);
++
++   //platform_driver_register(pdev);
++   dev_info(&pdev->dev, "Kutu MSP430_SBW finished loading driver\n");
++
++   return 0;
++
++failed7:
++   class_destroy(MSP430_SBW->class);
++failed6:
++   /* Unregister char driver */
++   unregister_chrdev_region(devt, MSP430_SBW_DEVICES);
++failed5:
++
++   return ret;
++}
++
++static int MSP430_SBW_remove(struct platform_device *pdev)
++{
++   struct MSP430_SBW_drvdata *MSP430_SBW;
++
++   MSP430_SBW = platform_get_drvdata(pdev);
++
++   if (!MSP430_SBW)
++      return -ENODEV;
++
++   unregister_chrdev_region(MSP430_SBW->devt, MSP430_SBW_DEVICES);
++
++   //	sysfs_remove_group(&pdev->dev.kobj, &MSP430_SBW_attr_group);
++
++   device_destroy(MSP430_SBW->class, MSP430_SBW->devt);
++   class_destroy(MSP430_SBW->class);
++   cdev_del(&MSP430_SBW->cdev);
++   clk_unprepare(MSP430_SBW->clk);
++
++   return 0;
++}
++
++static struct platform_driver MSP430_SBW_driver = {
++   .probe = MSP430_SBW_probe,
++   .remove = MSP430_SBW_remove,
++   .driver = {
++   .name = "MSP430-SBW",
++   .of_match_table = MSP430_SBW_of_match_table,
++   },
++};
++module_platform_driver(MSP430_SBW_driver);
++
++MODULE_AUTHOR("Universal Biosensors Pty Ltd");
++MODULE_DESCRIPTION("MSP430 SBW Linux driver");
++MODULE_LICENSE("GPL v2");
+diff --git a/drivers/char/MSP430_SBW/MSP430-SBW.h b/drivers/char/MSP430_SBW/MSP430-SBW.h
+new file mode 100644
+index 0000000..61216c1
+--- /dev/null
++++ b/drivers/char/MSP430_SBW/MSP430-SBW.h
+@@ -0,0 +1,99 @@
++/*
++ *  IND.h -- Register definitions for IND implementation
++ *
++ *  Greg Smart
++ *
++ *  Version 0.1 10/03/14
++ *
++ */
++
++#ifndef _MSP430_SBW_H
++#define _MSP430_SBW_H
++
++
++
++#define MSP430_SBW_DEBUG_READ        	(1)
++#define MSP430_SBW_DEBUG_WRITE       	(2)
++#define MSP430_SBW_DEBUG_DMA_READ    	(3)
++#define MSP430_SBW_DEBUG_DMA_WRITE   	(4)
++
++/*
++** Status constants
++*/
++#define BIT_PORT0       (0x00000001)
++#define BIT_RST         (0x00000002)
++#define BIT_TEST        (0x00000004)
++#define BIT_PORT3       (0x00000008)
++#define BIT_PORT4       (0x00000010)
++#define BIT_PORT5       (0x00000020)
++#define BIT_PORT6       (0x00000040)
++#define BIT_PORT7       (0x00000080)
++
++
++enum MSP430_SBW_user_cmds
++{
++   MSP430_SBW_USER_SETDIR,
++   MSP430_SBW_USER_WRITE_OUTPUT,
++   MSP430_SBW_USER_READ_INPUT,
++   MSP430_SBW_USER_READBACK_OUTPUT,
++   MSP430_SBW_USER_REG_DEBUG,
++   MSP430_SBW_USER_RELEASE,
++   MSP430_SBW_USER_RESETTAP,
++   MSP430_SBW_USER_RESTART,
++   MSP430_SBW_USER_START,
++   MSP430_SBW_USER_SHIFTIR,
++   MSP430_SBW_USER_SHIFTDR16,
++   MSP430_SBW_USER_SHIFTDR20,
++   MSP430_SBW_USER_TCLKHIGH,
++   MSP430_SBW_USER_TCLKLOW,
++   MSP430_SBW_USER_UPDATEDR
++};
++
++struct MSP430_SBW_debug_struct {
++   __u32                           cmd;
++   __u32                           reg;
++   __u32                           data;
++} ;
++
++
++/*
++ *  struct MSP430_SBW_cmd_struct.
++ *  This structure points to the first block where the registers are located
++ */
++
++struct MSP430_SBW_cmd_struct {
++   __u32                            config;
++   __u32                            interrupt;
++   __u32                            address;
++   __u32                            capture_count;
++   __u32                            delay_count;
++   __u32                            peak_detect_start;
++   __u32                            peak_detect_end;
++   __s32                            adc_offset;
++} ;
++
++
++/*
++ *  IOCTL definitions.
++ */
++
++#define MSP430_SBW_IOCTL_BASE	't'
++
++#define MSP430_SBW_USER_SETDIR                     _IOWR(MSP430_SBW_IOCTL_BASE, 0x80, struct MSP430_SBW_cmd_struct)
++#define MSP430_SBW_USER_WRITE_OUTPUT               _IOWR(MSP430_SBW_IOCTL_BASE, 0x81, struct MSP430_SBW_cmd_struct)
++#define MSP430_SBW_USER_READ_INPUT                 _IOWR(MSP430_SBW_IOCTL_BASE, 0x82, struct MSP430_SBW_cmd_struct)
++#define MSP430_SBW_USER_READBACK_OUTPUT            _IOWR(MSP430_SBW_IOCTL_BASE, 0x83, struct MSP430_SBW_cmd_struct)
++#define MSP430_SBW_USER_REG_DEBUG                  _IOWR(MSP430_SBW_IOCTL_BASE, 0x84, struct MSP430_SBW_debug_struct)
++#define MSP430_SBW_USER_RELEASE                    _IOWR(MSP430_SBW_IOCTL_BASE, 0x85, struct MSP430_SBW_cmd_struct)
++#define MSP430_SBW_USER_RESETTAP                   _IOWR(MSP430_SBW_IOCTL_BASE, 0x86, struct MSP430_SBW_cmd_struct)
++#define MSP430_SBW_USER_RESTART                    _IOWR(MSP430_SBW_IOCTL_BASE, 0x87, struct MSP430_SBW_cmd_struct)
++#define MSP430_SBW_USER_START                      _IOWR(MSP430_SBW_IOCTL_BASE, 0x88, struct MSP430_SBW_cmd_struct)
++#define MSP430_SBW_USER_SHIFTIR                    _IOWR(MSP430_SBW_IOCTL_BASE, 0x89, struct MSP430_SBW_cmd_struct)
++#define MSP430_SBW_USER_SHIFTDR16                  _IOWR(MSP430_SBW_IOCTL_BASE, 0x8a, struct MSP430_SBW_cmd_struct)
++#define MSP430_SBW_USER_SHIFTDR20                  _IOWR(MSP430_SBW_IOCTL_BASE, 0x8b, struct MSP430_SBW_cmd_struct)
++#define MSP430_SBW_USER_TCLKHIGH                   _IOWR(MSP430_SBW_IOCTL_BASE, 0x8c, struct MSP430_SBW_cmd_struct)
++#define MSP430_SBW_USER_TCLKLOW                    _IOWR(MSP430_SBW_IOCTL_BASE, 0x8d, struct MSP430_SBW_cmd_struct)
++#define MSP430_SBW_USER_UPDATEDR                   _IOWR(MSP430_SBW_IOCTL_BASE, 0x8e, struct MSP430_SBW_cmd_struct)
++
++
++#endif /* _MSP430_SBW_H */
+diff --git a/drivers/char/MSP430_SBW/Makefile b/drivers/char/MSP430_SBW/Makefile
+new file mode 100755
+index 0000000..5c8bbdf
+--- /dev/null
++++ b/drivers/char/MSP430_SBW/Makefile
+@@ -0,0 +1,2 @@
++MSP430-SBW-drv-y := MSP430-SBW.o SBW_IO.o SBWInterface.o SBWLowLevel.o
++obj-$(CONFIG_MSP430_SBW) += MSP430-SBW-drv.o
+diff --git a/drivers/char/MSP430_SBW/SBWInterface.c b/drivers/char/MSP430_SBW/SBWInterface.c
+new file mode 100644
+index 0000000..e49e39d
+--- /dev/null
++++ b/drivers/char/MSP430_SBW/SBWInterface.c
+@@ -0,0 +1,206 @@
++/*
++ * SBWInterface.c
++ *
++ * Copyright (c) 2018 Universal Biosensors Pty. Ltd.
++ *
++ * This program is free software; you can redistribute it and/or modify it
++ * under the terms of the GNU General Public License version 2 as published by
++ * the Free Software Foundation.
++ *
++ * These functions are the lowest level I/O functions for device specific
++ * I/O functions.  This module provides a plafomr independent interface
++ * to the rest of the driver.
++ *
++ */
++
++// System Includes
++#include <linux/module.h>
++#include <linux/version.h>
++#include <linux/kernel.h>
++#include <linux/types.h>
++#include <linux/kdev_t.h>
++#include <linux/of.h>
++#include <linux/fs.h>
++#include <linux/device.h>
++#include <linux/cdev.h>
++#include <linux/clk.h>
++#include <linux/init.h>
++#include <linux/interrupt.h>
++#include <linux/delay.h>
++#include <linux/poll.h>
++#include <linux/dma-mapping.h>
++#include <linux/platform_device.h>
++#include <linux/time.h>
++
++// Application includes
++#include "MSP430-SBW.h"
++#include "MSP430-SBW-system.h"
++#include "SBW_IO.h"
++#include "SBWInterface.h"
++
++//***************************************************************************
++//! \fn      TDILow()
++//! \brief   Sets the SBW TDI low
++//!
++//! \returns void
++//***************************************************************************
++void TDILow(struct MSP430_SBW_drvdata *MSP430_SBW)
++{
++  // Set the TDI data low by setting reset low
++  RSTLow(MSP430_SBW);
++
++  // Execute a one microsecond delay
++  DelayMicroSeconds(1);
++
++  // Set the clock low to clock in the TMS data by setting test low
++  TSTLow(MSP430_SBW);
++
++  // Execute a one microsecond delay
++  DelayMicroSeconds(1);
++
++  // Set the clock back to the default high state by setting test high
++  TSTHigh(MSP430_SBW);
++}
++
++//***************************************************************************
++//! \fn      TDIHigh()
++//! \brief   Sets the SBW TDI high
++//!
++//! \returns void
++//***************************************************************************
++void TDIHigh(struct MSP430_SBW_drvdata *MSP430_SBW)
++{
++  // Set the TDI data high by setting reset high
++  RSTHigh(MSP430_SBW);
++
++  // Execute a one microsecond delay
++  DelayMicroSeconds(1);
++
++  // Set the clock low to clock in the TMS data by setting test low
++  TSTLow(MSP430_SBW);
++
++  // Execute a one microsecond delay
++  DelayMicroSeconds(1);
++
++  // Set the clock back to the default high state by setting test high
++  TSTHigh(MSP430_SBW);
++
++  // Return nothing
++  return;
++}
++
++//***************************************************************************
++//! \fn      TDORead()
++//! \brief   Reads the SBW TDI signal (TDO from the target)
++//!
++//! \returns uint8_t containing the data from the target
++//***************************************************************************
++u8 TDORead(struct MSP430_SBW_drvdata *MSP430_SBW)
++{
++  uint8_t tdiData;
++
++  // Set the reset pin to an input
++  RSTInput(MSP430_SBW);
++
++  // Execute a one microsecond delay
++  DelayMicroSeconds(1);
++
++  // Set the clock low to clock in the TMS data by setting test low
++  TSTLow(MSP430_SBW);
++
++  // Execute a one microsecond delay
++  DelayMicroSeconds(1);
++
++  // Check the TDI data
++  tdiData = RSTRead(MSP430_SBW);
++
++  // Set the clock back to the default high state by setting test high
++  TSTHigh(MSP430_SBW);
++
++  // Set the reset pin to an output
++  RSTOutput(MSP430_SBW);
++
++  // Return nothing the read data
++  return(tdiData);
++}
++
++//***************************************************************************
++//! \fn      TMSLow()
++//! \brief   Sets the SBW TMS low
++//!
++//! \returns void
++//***************************************************************************
++void TMSLow(struct MSP430_SBW_drvdata *MSP430_SBW)
++{
++  // Set the TMS data low by setting reset low
++  RSTLow(MSP430_SBW);
++
++  // Execute a one microsecond delay
++  DelayMicroSeconds(1);
++
++  // Set the clock low to clock in the TMS data by setting test low
++  TSTLow(MSP430_SBW);
++
++  // Execute a one microsecond delay
++  DelayMicroSeconds(1);
++
++  // Set the clock back to the default high state by setting test high
++  TSTHigh(MSP430_SBW);
++
++  // Return nothing
++  return;
++}
++
++//***************************************************************************
++//! \fn      TMSLowHigh()
++//! \brief   Sets the SBW TMS low and then high before the cycle end
++//!
++//! \returns void
++//***************************************************************************
++void TMSLowHigh(struct MSP430_SBW_drvdata *MSP430_SBW)
++{
++  // Set the TMS data low by setting reset low
++  RSTLow(MSP430_SBW);
++
++  // Execute a one microsecond delay
++  DelayMicroSeconds(1);
++
++  // Set the clock low to clock in the TMS data by setting test low
++  TSTLow(MSP430_SBW);
++
++  // Execute a one microsecond delay
++  DelayMicroSeconds(1);
++
++  // Set the TMS data high by setting reset high
++  RSTHigh(MSP430_SBW);
++
++  // Set the clock back to the default high state by setting test high
++  TSTHigh(MSP430_SBW);
++
++  // Return nothing
++  return;
++}
++
++//***************************************************************************
++//! \fn      TMSHigh()
++//! \brief   Sets the SBW TMS high
++//!
++//! \returns void
++//***************************************************************************
++void TMSHigh(struct MSP430_SBW_drvdata *MSP430_SBW)
++{
++  // Set the TMS data high by setting reset high
++  RSTHigh(MSP430_SBW);
++
++  // Execute a one microsecond delay
++  DelayMicroSeconds(1);
++
++  // Set the clock low to clock in the TMS data by setting test low
++  TSTLow(MSP430_SBW);
++
++  // Execute a one microsecond delay
++  DelayMicroSeconds(1);
++
++  // Set the clock back to the default high state by setting test high
++  TSTHigh(MSP430_SBW);
++}
+diff --git a/drivers/char/MSP430_SBW/SBWInterface.h b/drivers/char/MSP430_SBW/SBWInterface.h
+new file mode 100644
+index 0000000..4393e6d
+--- /dev/null
++++ b/drivers/char/MSP430_SBW/SBWInterface.h
+@@ -0,0 +1,27 @@
++/*
++ * SBWInterface.h
++ *
++ * Copyright (c) 2018 Universal Biosensors Pty. Ltd.
++ *
++ * This program is free software; you can redistribute it and/or modify it
++ * under the terms of the GNU General Public License version 2 as published by
++ * the Free Software Foundation.
++ *
++ * These functions are the lowest level I/O functions for device specific
++ * I/O functions.  This module provides a plafomr independent interface
++ * to the rest of the driver.
++ *
++ */
++
++#ifndef _SBW_INTERFACE_H_
++#define _SBW_INTERFACE_H_
++
++// Function Definitions
++void    TDILow(struct MSP430_SBW_drvdata *MSP430_SBW);
++void    TDIHigh(struct MSP430_SBW_drvdata *MSP430_SBW);
++u8      TDORead(struct MSP430_SBW_drvdata *MSP430_SBW);
++void    TMSLow(struct MSP430_SBW_drvdata *MSP430_SBW);
++void    TMSLowHigh(struct MSP430_SBW_drvdata *MSP430_SBW);
++void    TMSHigh(struct MSP430_SBW_drvdata *MSP430_SBW);
++
++#endif /* _SBW_INTERFACE_H_ */
+diff --git a/drivers/char/MSP430_SBW/SBWLowLevel.c b/drivers/char/MSP430_SBW/SBWLowLevel.c
+new file mode 100644
+index 0000000..41abc78
+--- /dev/null
++++ b/drivers/char/MSP430_SBW/SBWLowLevel.c
+@@ -0,0 +1,724 @@
++//***************************************************************************
++//! \file       SBWLowLevel.c
++//! \brief      Contains the low level functions for the SBW controller.
++//! \author     Rod Macdonald
++//! \date       14/09/2018
++//! \version    $Id$
++//!
++//! \par        Platform:
++//!             Avatar CPU (Eventually)
++//!             Code Composer Studio Version: 8.1.0.00011
++//!
++//! \par        Processor variant:
++//!             MSP430FR5859
++//!
++//! \par        (c) Copyright Universal Biosensors Pty. Ltd. 2018
++//!
++//! @{
++//***************************************************************************
++
++// System Includes
++#include <linux/module.h>
++#include <linux/version.h>
++#include <linux/kernel.h>
++#include <linux/types.h>
++#include <linux/kdev_t.h>
++#include <linux/of.h>
++#include <linux/fs.h>
++#include <linux/device.h>
++#include <linux/cdev.h>
++#include <linux/clk.h>
++#include <linux/init.h>
++#include <linux/interrupt.h>
++#include <linux/delay.h>
++#include <linux/poll.h>
++#include <linux/dma-mapping.h>
++#include <linux/platform_device.h>
++#include <linux/time.h>
++
++// Application includes
++#include "MSP430-SBW.h"
++#include "MSP430-SBW-system.h"
++#include "SBW_IO.h"
++#include "SBWInterface.h"
++#include "SBWLowLevel.h"
++
++// External References
++
++//***************************************************************************
++//! \fn      SBWRelease()
++//! \brief   Performs a brown out reset via JTAG
++//!
++//! \returns void
++//***************************************************************************
++void SBWRelease(struct MSP430_SBW_drvdata *MSP430_SBW)
++{
++  // Set the reset output low
++  RSTLow(MSP430_SBW);
++
++  // Wait for 1 millisecond
++  DelayMicroSeconds(1000);
++
++  // Set the test output low
++  TSTLow(MSP430_SBW);
++
++  // Wait for 10 milliseconds
++  DelayMicroSeconds(10000);
++
++  // Set the reset output high
++  RSTHigh(MSP430_SBW);
++
++  // Return nothing
++  return;
++}
++
++//***************************************************************************
++//! \fn      SBWResetTAP()
++//! \brief   Resets the SBW Test Access Port (TAP)
++//!
++//! \returns void
++//***************************************************************************
++void SBWResetTAP(struct MSP430_SBW_drvdata *MSP430_SBW)
++{
++  uint8_t count;
++
++  // Execute the following sequence at least 6 times to reset the TAP FSM
++  for (count = 6; count > 0; count--)
++  {
++    // Set TMS High
++    TMSHigh(MSP430_SBW);
++
++    // Set TDI high
++    TDIHigh(MSP430_SBW);
++
++    // Read the TDO data but ignore
++    TDORead(MSP430_SBW);
++  }
++
++  // Set TMS Low to set the TAP FSM to idle
++  TMSLow(MSP430_SBW);
++
++  // Set TDI high
++  TDIHigh(MSP430_SBW);
++
++  // Read the TDO data but ignore
++  TDORead(MSP430_SBW);
++
++  // Wait for 20 microseconds
++  DelayMicroSeconds(20);
++}
++
++//***************************************************************************
++//! \fn      SBWRestart()
++//! \brief   Restarts SBW JTAG communication with reset high
++//!
++//! \returns void
++//***************************************************************************
++void SBWRestart(struct MSP430_SBW_drvdata *MSP430_SBW)
++{
++  // Set the test output low
++  TSTLow(MSP430_SBW);
++
++  // Wait for 4 milliseconds
++  DelayMicroSeconds(4000);
++
++  // Set the reset output high
++  RSTHigh(MSP430_SBW);
++
++  // Set the test output high
++  TSTHigh(MSP430_SBW);
++
++  // Wait for 20 millisecond
++  DelayMicroSeconds(20000);
++
++  // Set the reset output high
++  RSTHigh(MSP430_SBW);
++
++  // Wait for 60 microseconds
++  DelayMicroSeconds(60);
++
++  // Set the test output low
++  TSTLow(MSP430_SBW);
++
++  // Wait for 1 microsecond
++  DelayMicroSeconds(1);
++
++  // Set the test output high
++  TSTHigh(MSP430_SBW);
++
++  // Wait for 5 millisecond
++  DelayMicroSeconds(5000);
++}
++
++//***************************************************************************
++//! \fn      SBWShiftIR()
++//! \brief   This function transfers data to/from the SBW IR register
++//!
++//! \param   instruction    uint8_t     IR register instruction
++//!
++//! \returns the 8-bit IR data from the target
++//***************************************************************************
++u8 SBWShiftIR(struct MSP430_SBW_drvdata *MSP430_SBW, u8 instruction)
++{
++  u8  result;
++  u8  count;
++
++  // Set TMS High to select DR-Scan SBW FSM state
++  TMSHigh(MSP430_SBW);
++
++  // Check the TCLK state
++  if( MSP430_SBW->tclkState == 0 )
++  {
++    // Set TDI low
++    TDILow(MSP430_SBW);
++  }
++  else
++  {
++    // Set TDI high
++    TDIHigh(MSP430_SBW);
++  }
++
++  // Read the TDO data but ignore
++  TDORead(MSP430_SBW);
++
++  // Set TMS High to select IR-Scan SBW FSM state
++  TMSHigh(MSP430_SBW);
++
++  // Set TDI high
++  TDIHigh(MSP430_SBW);
++
++  // Read the TDO data but ignore
++  TDORead(MSP430_SBW);
++
++  // Set TMS Low to select Capture-IR SBW FSM state
++  TMSLow(MSP430_SBW);
++
++  // Set TDI high
++  TDIHigh(MSP430_SBW);
++
++  // Read the TDO data but ignore
++  TDORead(MSP430_SBW);
++
++  // Set TMS Low to select Shift-IR SBW FSM state
++  TMSLow(MSP430_SBW);
++
++  // Set TDI high
++  TDIHigh(MSP430_SBW);
++
++  // Read the TDO data but ignore
++  TDORead(MSP430_SBW);
++
++  // Clear the result
++  result = 0u;
++
++  // Repeat for all 8 bits
++  for( count = 8; count > 0; count--)
++  {
++    // Check if the last bit is being sent
++    if( count == 1 )
++    {
++      // Set TMS high to select Exit1-IR SBW FSM state
++      TMSHigh(MSP430_SBW);
++    }
++    else
++    {
++      // Set TMS low
++      TMSLow(MSP430_SBW);
++    }
++
++    // Check if the bit to be transferred is high
++    if(( instruction & (1 << ( count - 1 ))) > 0 )
++    {
++      // Set TDI high
++      TDIHigh(MSP430_SBW);
++    }
++    else
++    {
++      // Set TDI low
++      TDILow(MSP430_SBW);
++    }
++
++    // Shift the result left to make space for the new data
++    result <<= 1;
++
++    // Get the data from the target
++    result += TDORead(MSP430_SBW);
++  }
++
++  // Set TMS High to select Update-IR SBW FSM state
++  TMSHigh(MSP430_SBW);
++
++  // Set TDI high
++  TDIHigh(MSP430_SBW);
++
++  // Read the TDO data but ignore
++  TDORead(MSP430_SBW);
++
++  // Set TMS Low to select Idle SBW FSM state
++  TMSLow(MSP430_SBW);
++
++  // Check the TCLK state
++  if( MSP430_SBW->tclkState == 0 )
++  {
++    // Set TDI low
++    TDILow(MSP430_SBW);
++  }
++  else
++  {
++    // Set TDI high
++    TDIHigh(MSP430_SBW);
++  }
++
++  // Read the TDO data but ignore
++  TDORead(MSP430_SBW);
++
++  // Wait for 20 microseconds
++  DelayMicroSeconds(20);
++
++  // Return the result
++  return(result);
++}
++
++//***************************************************************************
++//! \fn      SBWShiftDR16()
++//! \brief   This function transfers 16-bit data to/from the SBW DR register
++//!
++//! \param   instruction    uint16_t    DR register data
++//!
++//! \returns the 16-bit data from the target
++//***************************************************************************
++u16 SBWShiftDR16(struct MSP430_SBW_drvdata *MSP430_SBW, u16 data)
++{
++  u16 result;
++  u16 mask;
++  u8  count;
++
++  // Set the initial mask for the bit transfer
++  mask = 0x8000;
++
++  // Clear the result
++  result = 0u;
++
++  // Set TMS High to select DR-Scan SBW FSM state
++  TMSHigh(MSP430_SBW);
++
++  // Check the TCLK state
++  if(MSP430_SBW->tclkState == 0 )
++  {
++    // Set TDI low
++    TDILow(MSP430_SBW);
++  }
++  else
++  {
++    // Set TDI high
++    TDIHigh(MSP430_SBW);
++  }
++
++  // Read the TDO data but ignore
++  TDORead(MSP430_SBW);
++
++  // Set TMS Low to select Capture-DR SBW FSM state
++  TMSLow(MSP430_SBW);
++
++  // Set TDI high
++  TDIHigh(MSP430_SBW);
++
++  // Read the TDO data but ignore
++  TDORead(MSP430_SBW);
++
++  // Set TMS Low to select Shift-DR SBW FSM state
++  TMSLow(MSP430_SBW);
++
++  // Set TDI high
++  TDIHigh(MSP430_SBW);
++
++  // Read the TDO data but ignore
++  TDORead(MSP430_SBW);
++
++  // Repeat for all 16 bits
++  for( count = 16; count > 0; count--)
++  {
++    // Check if the last bit is being sent
++    if( count == 1 )
++    {
++      // Set TMS high to select Exit1-DR SBW FSM state
++      TMSHigh(MSP430_SBW);
++    }
++    else
++    {
++      // Set TMS low
++      TMSLow(MSP430_SBW);
++    }
++
++    // Check if the bit to be transferred is high
++    if(( data & mask ) > 0 )
++    {
++      // Set TDI high
++      TDIHigh(MSP430_SBW);
++    }
++    else
++    {
++      // Set TDI low
++      TDILow(MSP430_SBW);
++    }
++
++    // Shift the result left to make space for the new data
++    result <<= 1;
++
++    // Get the data from the target
++    result += TDORead(MSP430_SBW);
++
++    // Update the mask
++    mask = ( mask >> 1 ) & 0x7FFF;
++  }
++
++  // Set TMS High to select Update-DR SBW FSM state
++  TMSHigh(MSP430_SBW);
++
++  // Set TDI high
++  TDIHigh(MSP430_SBW);
++
++  // Read the TDO data but ignore
++  TDORead(MSP430_SBW);
++
++  // Set TMS Low to select Idle SBW FSM state
++  TMSLow(MSP430_SBW);
++
++  // Check the TCLK state
++  if(MSP430_SBW->tclkState == 0 )
++  {
++    // Set TDI low
++    TDILow(MSP430_SBW);
++  }
++  else
++  {
++    // Set TDI high
++    TDIHigh(MSP430_SBW);
++  }
++
++  // Read the TDO data but ignore
++  TDORead(MSP430_SBW);
++
++  // Wait for 10 microseconds
++  DelayMicroSeconds(10);
++
++  // Return the result
++  return(result);
++}
++
++//***************************************************************************
++//! \fn      SBWShiftDR20()
++//! \brief   This function transfers 20-bit data to/from the SBW DR register
++//!
++//! \param   instruction    uint32_t     DR register address
++//!
++//! \returns the 20-bit DR data from the target
++//***************************************************************************
++u32 SBWShiftDR20(struct MSP430_SBW_drvdata *MSP430_SBW, u32 address)
++{
++  u32 result;
++  u32 mask;
++  u8  count;
++
++  // Set the initial mask for the bit transfer
++  mask = 0x00080000;
++
++  // Clear the result
++  result = 0u;
++
++  // Set TMS High to select DR-Scan SBW FSM state
++  TMSHigh(MSP430_SBW);
++
++  // Check the TCLK state
++  if(MSP430_SBW->tclkState == 0 )
++  {
++    // Set TDI low
++    TDILow(MSP430_SBW);
++  }
++  else
++  {
++    // Set TDI high
++    TDIHigh(MSP430_SBW);
++  }
++
++  // Read the TDO data but ignore
++  TDORead(MSP430_SBW);
++
++  // Set TMS Low to select Capture-DR SBW FSM state
++  TMSLow(MSP430_SBW);
++
++  // Set TDI high
++  TDIHigh(MSP430_SBW);
++
++  // Read the TDO data but ignore
++  TDORead(MSP430_SBW);
++
++  // Set TMS Low to select Shift-DR SBW FSM state
++  TMSLow(MSP430_SBW);
++
++  // Set TDI high
++  TDIHigh(MSP430_SBW);
++
++  // Read the TDO data but ignore
++  TDORead(MSP430_SBW);
++
++  // Repeat for all 20 bits
++  for( count = 20; count > 0; count--)
++  {
++    // Check if the last bit is being sent
++    if( count == 1 )
++    {
++      // Set TMS high to select Exit1-DR SBW FSM state
++      TMSHigh(MSP430_SBW);
++    }
++    else
++    {
++      // Set TMS low
++      TMSLow(MSP430_SBW);
++    }
++
++    // Check if the bit to be transferred is high
++    if(( address & mask ) > 0 )
++    {
++      // Set TDI high
++      TDIHigh(MSP430_SBW);
++    }
++    else
++    {
++      // Set TDI low
++      TDILow(MSP430_SBW);
++    }
++
++    // Shift the result left to make space for the new data
++    result <<= 1;
++
++    // Get the data from the target
++    result += TDORead(MSP430_SBW);
++
++    // Update the mask
++    mask = ( mask >> 1 ) & 0x7FFFFFFF;
++  }
++
++  // Unscramble the return data
++  //result = (( result << 16 ) + ( result >> 4 )) & 0x00FFFFF;
++
++  // Set TMS High to select Update-DR SBW FSM state
++  TMSHigh(MSP430_SBW);
++
++  // Set TDI high
++  TDIHigh(MSP430_SBW);
++
++  // Read the TDO data but ignore
++  TDORead(MSP430_SBW);
++
++  // Set TMS Low to select Idle SBW FSM state
++  TMSLow(MSP430_SBW);
++
++  // Check the TCLK state
++  if(MSP430_SBW->tclkState == 0 )
++  {
++    // Set TDI low
++    TDILow(MSP430_SBW);
++  }
++  else
++  {
++    // Set TDI high
++    TDIHigh(MSP430_SBW);
++  }
++
++  // Read the TDO data but ignore
++  TDORead(MSP430_SBW);
++
++  // Wait for 10 microseconds
++  DelayMicroSeconds(10);
++
++  // Return the result
++  return(result);
++}
++
++//***************************************************************************
++//! \fn      SBWStart()
++//! \brief   Starts SBW JTAG communication. Must exit with the test output
++//!          high
++//!
++//! \returns void
++//***************************************************************************
++void SBWStart(struct MSP430_SBW_drvdata *MSP430_SBW)
++{
++  // Set the test output low
++  TSTLow(MSP430_SBW);
++
++  // Wait for 1 milliseconds
++  DelayMicroSeconds(1000);
++
++  // Set the reset output low
++  RSTLow(MSP430_SBW);
++
++  // Wait for 50 milliseconds
++  DelayMicroSeconds(50000);
++
++  // Set the test output high
++  TSTHigh(MSP430_SBW);
++
++  // Wait for 100 millisecond
++  DelayMicroSeconds(100000);
++
++  // Set the reset output high
++  RSTHigh(MSP430_SBW);
++
++  // Wait for 40 microseconds
++  DelayMicroSeconds(40);
++
++  // Set the test output low
++  TSTLow(MSP430_SBW);
++
++  // Wait for 1 microseconds
++  DelayMicroSeconds(1);
++
++  // Set the test output high
++  TSTHigh(MSP430_SBW);
++
++  // Wait for 5 millisecond
++  DelayMicroSeconds(5000);
++}
++
++//***************************************************************************
++//! \fn      SBWTCLKHigh()
++//! \brief   Sets the SBW TCLK high
++//!
++//! \returns void
++//***************************************************************************
++void SBWTCLKHigh(struct MSP430_SBW_drvdata *MSP430_SBW)
++{
++  // Check the previous state of TCLK
++  if(MSP430_SBW->tclkState == 1 )
++  {
++    // Set the TMS low then high
++    TMSLowHigh(MSP430_SBW);
++  }
++  else
++  {
++    // Set the TMS low
++    TMSLow(MSP430_SBW);
++  }
++
++  // Set the TDI high
++  TDIHigh(MSP430_SBW);
++
++  // Read the TDO data but ignore
++  TDORead(MSP430_SBW);
++
++  // Set the TCLK state
++ MSP430_SBW->tclkState = 1;
++
++  // Wait for 20 microseconds
++  DelayMicroSeconds(20);
++}
++
++//***************************************************************************
++//! \fn      SBWTCLKLow()
++//! \brief   Sets the SBW TCLK low
++//!
++//! \returns void
++//***************************************************************************
++void SBWTCLKLow(struct MSP430_SBW_drvdata *MSP430_SBW)
++{
++  // Check the previous state of TCLK
++  if(MSP430_SBW->tclkState == 1 )
++  {
++    // Set the TMS low then high
++    TMSLowHigh(MSP430_SBW);
++  }
++  else
++  {
++    // Set the TMS low
++    TMSLow(MSP430_SBW);
++  }
++
++  // Set the TDI low
++  TDILow(MSP430_SBW);
++
++  // Read the TDO data but ignore
++  TDORead(MSP430_SBW);
++
++  // Clear the TCLK state
++ MSP430_SBW->tclkState = 0;
++
++  // Wait for 20 microseconds
++  DelayMicroSeconds(20);
++}
++
++//***************************************************************************
++//! \fn      SBWUpdateDR()
++//! \brief   Updates the JTAG Data Register with no data transfer
++//!
++//! \returns void
++//***************************************************************************
++void SBWUpdateDR(struct MSP430_SBW_drvdata *MSP430_SBW)
++{
++  // Set the TMS high to move to Select DR Scan
++  TMSHigh(MSP430_SBW);
++
++  // Check the TCLK state
++  if(MSP430_SBW->tclkState == 0 )
++  {
++    // Set TDI low
++    TDILow(MSP430_SBW);
++  }
++  else
++  {
++    // Set TDI high
++    TDIHigh(MSP430_SBW);
++  }
++
++  // Read the TDO data but ignore
++  TDORead(MSP430_SBW);
++
++  // Set the TMS low to move to Capture DR
++  TMSLow(MSP430_SBW);
++
++  // Set the TDI high
++  TDIHigh(MSP430_SBW);
++
++  // Read the TDO data but ignore
++  TDORead(MSP430_SBW);
++
++  // Set the TMS high to move to Exit1 DR
++  TMSHigh(MSP430_SBW);
++
++  // Set the TDI high
++  TDIHigh(MSP430_SBW);
++
++  // Read the TDO data but ignore
++  TDORead(MSP430_SBW);
++
++  // Set the TMS high to move to Update DR Scan
++  TMSHigh(MSP430_SBW);
++
++  // Set the TDI high
++  TDIHigh(MSP430_SBW);
++
++  // Read the TDO data but ignore
++  TDORead(MSP430_SBW);
++
++  // Set the TMS low to move to Idle
++  TMSLow(MSP430_SBW);
++
++  // Check the TCLK state
++  if(MSP430_SBW->tclkState == 0 )
++  {
++    // Set TDI low
++    TDILow(MSP430_SBW);
++  }
++  else
++  {
++    // Set TDI high
++    TDIHigh(MSP430_SBW);
++  }
++
++  // Read the TDO data but ignore
++  TDORead(MSP430_SBW);
++
++  // Wait for 20 microseconds
++  DelayMicroSeconds(20);
++}
+diff --git a/drivers/char/MSP430_SBW/SBWLowLevel.h b/drivers/char/MSP430_SBW/SBWLowLevel.h
+new file mode 100644
+index 0000000..90520d1
+--- /dev/null
++++ b/drivers/char/MSP430_SBW/SBWLowLevel.h
+@@ -0,0 +1,40 @@
++//***************************************************************************
++//! \file       SBWLowLevel.h
++//! \brief      Contains function definitions for the configuration of the
++//!             SBW Low Level routines
++//! \author     Rod Macdonald
++//! \date       14/09/2018
++//! \version    $Id$
++//!
++//! \par        Platform:
++//!             Avatar CPU (Eventually)
++//!             Code Composer Studio Version: 8.1.0.00011
++//!
++//! \par        Processor variant:
++//!             MSP430FR5859
++//!
++//! \par        (c) Copyright Universal Biosensors Pty. Ltd. 2018
++//!
++//! @{
++//***************************************************************************
++
++#ifndef _SBW_LOW_LEVEL_H_
++#define _SBW_LOW_LEVEL_H_
++
++// Application includes
++
++// Definitions and constants
++
++// Function Definitions
++void     SBWRelease  (struct MSP430_SBW_drvdata *MSP430_SBW);
++void     SBWResetTAP (struct MSP430_SBW_drvdata *MSP430_SBW);
++void     SBWRestart  (struct MSP430_SBW_drvdata *MSP430_SBW);
++void     SBWStart    (struct MSP430_SBW_drvdata *MSP430_SBW);
++u8       SBWShiftIR  (struct MSP430_SBW_drvdata *MSP430_SBW, u8 instruction);
++u16      SBWShiftDR16(struct MSP430_SBW_drvdata *MSP430_SBW, u16 data);
++u32      SBWShiftDR20(struct MSP430_SBW_drvdata *MSP430_SBW, u32 address);
++void     SBWTCLKHigh (struct MSP430_SBW_drvdata *MSP430_SBW);
++void     SBWTCLKLow  (struct MSP430_SBW_drvdata *MSP430_SBW);
++void     SBWUpdateDR (struct MSP430_SBW_drvdata *MSP430_SBW);
++
++#endif /* _SBW_LOW_LEVEL_H_ */
+diff --git a/drivers/char/MSP430_SBW/SBW_IO.c b/drivers/char/MSP430_SBW/SBW_IO.c
+new file mode 100644
+index 0000000..c0623bb
+--- /dev/null
++++ b/drivers/char/MSP430_SBW/SBW_IO.c
+@@ -0,0 +1,159 @@
++/*
++ * SBW_IO.c
++ *
++ * Copyright (c) 2018 Universal Biosensors Pty. Ltd.
++ *
++ * This program is free software; you can redistribute it and/or modify it
++ * under the terms of the GNU General Public License version 2 as published by
++ * the Free Software Foundation.
++ *
++ * These functions are the lowest level I/O functions for device specific
++ * I/O functions.  This module provides a plafomr independent interface
++ * to the rest of the driver.
++ *
++ */
++
++// System Includes
++#include <linux/module.h>
++#include <linux/version.h>
++#include <linux/kernel.h>
++#include <linux/types.h>
++#include <linux/kdev_t.h>
++#include <linux/of.h>
++#include <linux/fs.h>
++#include <linux/device.h>
++#include <linux/cdev.h>
++#include <linux/clk.h>
++#include <linux/init.h>
++#include <linux/interrupt.h>
++#include <linux/delay.h>
++#include <linux/poll.h>
++#include <linux/dma-mapping.h>
++#include <linux/platform_device.h>
++#include <linux/time.h>
++
++// Application includes
++#include "MSP430-SBW.h"
++#include "MSP430-SBW-system.h"
++#include "SBW_IO.h"
++
++//***************************************************************************
++//! \fn      DelayMicroSeconds(delay)
++//! \brief   Sets a delay of the specified micro seconds
++//!
++//! \param   delay      uint32_t    number of microseconds
++//!
++//! \returns void
++//***************************************************************************
++void DelayMicroSeconds(u32 delay)
++{
++   udelay(delay);
++}
++
++//***************************************************************************
++//! \fn      RSTInput()
++//! \brief   Sets the reset pin to an input
++//!
++//! \returns void
++//***************************************************************************
++void RSTInput(struct MSP430_SBW_drvdata *MSP430_SBW)
++{
++   u32 val;
++
++   // Set the reset bit to an input
++   val = MSP430_SBW_read_reg(MSP430_SBW, R_DIRECTION_ADDR) | BIT_RST;
++   MSP430_SBW_write_reg(MSP430_SBW, R_DIRECTION_ADDR, val);
++}
++
++//***************************************************************************
++//! \fn      RSTOutput()
++//! \brief   Sets the reset pin to an output
++//!
++//! \returns void
++//***************************************************************************
++void RSTOutput(struct MSP430_SBW_drvdata *MSP430_SBW)
++{
++   u32 val;
++
++   // Set the reset bit to an output
++   val = MSP430_SBW_read_reg(MSP430_SBW, R_DIRECTION_ADDR) & ~BIT_RST;
++   MSP430_SBW_write_reg(MSP430_SBW, R_DIRECTION_ADDR, val);
++}
++//***************************************************************************
++//! \fn      RSTRead()
++//! \brief   returns the value of the RST line (for TDO)
++//!
++//! \returns void
++//***************************************************************************
++u8   RSTRead(struct MSP430_SBW_drvdata *MSP430_SBW)
++{
++   u32 val;
++
++   // Set the reset bit to an output
++   val = MSP430_SBW_read_reg(MSP430_SBW, R_READ_ADDR) & BIT_RST;
++
++   if (val)
++      return 1;
++   else
++      return 0;
++}
++
++//***************************************************************************
++//! \fn      RSTLow()
++//! \brief   Sets the reset output low
++//!
++//! \returns void
++//***************************************************************************
++void RSTLow(struct MSP430_SBW_drvdata *MSP430_SBW)
++{
++   u32 val;
++
++   // Set the nRST output low
++   val = MSP430_SBW_read_reg(MSP430_SBW, R_READBACK_WR_ADDR) & ~BIT_RST;
++   MSP430_SBW_write_reg(MSP430_SBW, R_WRITE_ADDR, val);
++}
++
++//***************************************************************************
++//! \fn      RSTHigh()
++//! \brief   Sets the reset output high
++//!
++//! \returns void
++//***************************************************************************
++void RSTHigh(struct MSP430_SBW_drvdata *MSP430_SBW)
++{
++   u32 val;
++
++   // Set the nRST output high
++   val = MSP430_SBW_read_reg(MSP430_SBW, R_READBACK_WR_ADDR) | BIT_RST;
++   MSP430_SBW_write_reg(MSP430_SBW, R_WRITE_ADDR, val);
++}
++
++//***************************************************************************
++//! \fn      TSTLow()
++//! \brief   Sets the test output low
++//!
++//! \returns void
++//***************************************************************************
++void TSTLow(struct MSP430_SBW_drvdata *MSP430_SBW)
++{
++   u32 val;
++
++   // Set the TEST output low
++   val = MSP430_SBW_read_reg(MSP430_SBW, R_READBACK_WR_ADDR) & ~BIT_TEST;
++   MSP430_SBW_write_reg(MSP430_SBW, R_WRITE_ADDR, val);
++}
++
++//***************************************************************************
++//! \fn      TSTHigh()
++//! \brief   Sets the test output high
++//!
++//! \returns void
++//***************************************************************************
++void TSTHigh(struct MSP430_SBW_drvdata *MSP430_SBW)
++{
++   u32 val;
++
++   // Set the TEST output high
++   val = MSP430_SBW_read_reg(MSP430_SBW, R_READBACK_WR_ADDR) | BIT_RST;
++   MSP430_SBW_write_reg(MSP430_SBW, R_WRITE_ADDR, val);
++}
+diff --git a/drivers/char/MSP430_SBW/SBW_IO.h b/drivers/char/MSP430_SBW/SBW_IO.h
+new file mode 100644
+index 0000000..f9bed50
+--- /dev/null
++++ b/drivers/char/MSP430_SBW/SBW_IO.h
+@@ -0,0 +1,29 @@
++/*
++ * SBW_IO.h
++ *
++ * Copyright (c) 2018 Universal Biosensors Pty. Ltd.
++ *
++ * This program is free software; you can redistribute it and/or modify it
++ * under the terms of the GNU General Public License version 2 as published by
++ * the Free Software Foundation.
++ *
++ * These functions are the lowest level I/O functions for device specific
++ * I/O functions.  This module provides a plafomr independent interface
++ * to the rest of the driver.
++ *
++ */
++
++#ifndef _SBW_IO_H_
++#define _SBW_IO_H_
++
++// Function Definitions
++void DelayMicroSeconds(u32 delay);
++void RSTInput(struct MSP430_SBW_drvdata *MSP430_SBW);
++void RSTOutput(struct MSP430_SBW_drvdata *MSP430_SBW);
++u8   RSTRead(struct MSP430_SBW_drvdata *MSP430_SBW);
++void RSTLow(struct MSP430_SBW_drvdata *MSP430_SBW);
++void RSTHigh(struct MSP430_SBW_drvdata *MSP430_SBW);
++void TSTLow(struct MSP430_SBW_drvdata *MSP430_SBW);
++void TSTHigh(struct MSP430_SBW_drvdata *MSP430_SBW);
++
++#endif /* _SBW_IO_H_ */
+diff --git a/drivers/char/Makefile b/drivers/char/Makefile
+index 7dc3abe..147e820 100644
+--- a/drivers/char/Makefile
++++ b/drivers/char/Makefile
+@@ -28,6 +28,7 @@ obj-$(CONFIG_HPET)		+= hpet.o
+ obj-$(CONFIG_EFI_RTC)		+= efirtc.o
+ obj-$(CONFIG_DS1302)		+= ds1302.o
+ obj-$(CONFIG_XILINX_HWICAP)	+= xilinx_hwicap/
++obj-$(CONFIG_MSP430_SBW)	+= MSP430_SBW/
+ ifeq ($(CONFIG_GENERIC_NVRAM),y)
+   obj-$(CONFIG_NVRAM)	+= generic_nvram.o
+ else

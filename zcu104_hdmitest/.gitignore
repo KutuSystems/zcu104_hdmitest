@@ -1,0 +1,15 @@
+*/*/config.old
+*/*/rootfs_config.old
+build/
+images/linux/
+pre-built/linux/
+.petalinux/*
+!.petalinux/metadata
+*.o
+*.jou
+*.log
+*.swp
+project-spec/meta-plnx-generated/
+project-spec/hw-description/
+/components/plnx_workspace
+hardware/ZCU104_GPIO/ZCU104_hdmitest*
