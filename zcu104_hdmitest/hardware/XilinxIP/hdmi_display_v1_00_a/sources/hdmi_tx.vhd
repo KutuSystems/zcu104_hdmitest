@@ -71,10 +71,7 @@ entity hdmi_tx is
    port
    (
       reset             : in  std_logic;
-      ref_clk           : in  std_logic;
-
-      video_clk         : out std_logic;
-      locked            : out std_logic;
+      clk               : in  std_logic;
 
       --VGA input frame
       hsync             : in  std_logic;
@@ -84,84 +81,29 @@ entity hdmi_tx is
       green             : in  std_logic_vector(7 downto 0);
       blue              : in  std_logic_vector(7 downto 0);
 
-      debug_tmds_red    : out std_logic_vector(9 downto 0);
-      debug_tmds_green  : out std_logic_vector(9 downto 0);
-      debug_tmds_blue   : out std_logic_vector(9 downto 0);
-
       --HDMI output stream
-      HDMI_CLK_P        : out std_logic;
-      HDMI_CLK_N        : out std_logic;
-      HDMI_D2_P         : out std_logic;
-      HDMI_D2_N         : out std_logic;
-      HDMI_D1_P         : out std_logic;
-      HDMI_D1_N         : out std_logic;
-      HDMI_D0_P         : out std_logic;
-      HDMI_D0_N         : out std_logic
+      tmds_red          : out std_logic_vector(9 downto 0);
+      tmds_green        : out std_logic_vector(9 downto 0);
+      tmds_blue         : out std_logic_vector(9 downto 0)
+
    );
 end hdmi_tx;
 
 architecture RTL of hdmi_tx is
 
-   signal PXL_CLK_1X    : std_logic;
-   signal PXL_CLK_5X    : std_logic;
-
-   signal clk           : std_logic;
-   signal pll_locked    : std_logic := '0';
-   signal reset200      : std_logic := '1';
-   signal reset_reclock : std_logic := '1';
    signal reset_reg     : std_logic := '1';
    signal c             : std_logic_vector(1 downto 0);
    signal blank         : std_logic;
-
-   signal tmds_red      : std_logic_vector(9 downto 0);
-   signal tmds_green    : std_logic_vector(9 downto 0);
-   signal tmds_blue     : std_logic_vector(9 downto 0);
 
 begin
 
    video_clk         <= clk;
 
-   debug_tmds_red    <= tmds_red;
-   debug_tmds_green  <= tmds_green;
-   debug_tmds_blue   <= tmds_blue;
-
-   clock_gen_1 : entity hdmi_display_v1_00_a.clock_gen
-   generic map
-   (
-      REFERENCE_CLOCK   => REFERENCE_CLOCK,
-      OUTPUT_PIXEL_RATE => OUTPUT_PIXEL_RATE
-   )
-   port map
-   (
-      reset    => reset,
-      ref_clk  => ref_clk,
-
-      clk742   => PXL_CLK_5X,
-      clk148   => PXL_CLK_1X,
-      clk      => clk,
-      locked   => pll_locked
-   );
-
-   process (ref_clk)
-   begin
-      if rising_edge(ref_clk) then
-         if reset = '1' then
-            reset200   <= '1';
-         elsif reset_reg = '1' then
-            reset200   <= '0';
-         end if;
-      end if;
-   end process;
-
-   -- synchronous reset for BUFR
+   -- synchronous reset
    process (clk)
    begin
       if rising_edge(clk) then
-
-         locked         <= pll_locked;
-         reset_reclock  <= reset or reset200 or not pll_locked;
-         reset_reg <= reset_reclock or reset or reset200 or not pll_locked;
-
+         reset_reg      <= reset;
       end if;
    end process;
 
@@ -201,51 +143,6 @@ begin
       c        => c,
       blank    => blank,
       encoded  => tmds_blue
-   );
-
-   -- I/O serializers
-   ser_ch0: entity hdmi_display_v1_00_a.serializer
-   port map
-   (
-      reset    => reset_reg,
-      clk      => PXL_CLK_1X,
-      clk_x5   => PXL_CLK_5X,
-      data     => tmds_blue,
-      DOUT_P   => HDMI_D0_P,
-      DOUT_N   => HDMI_D0_N
-   );
-
-   ser_ch1: entity hdmi_display_v1_00_a.serializer
-   port map
-   (
-      reset    => reset_reg,
-      clk      => PXL_CLK_1X,
-      clk_x5   => PXL_CLK_5X,
-      data     => tmds_green,
-      DOUT_P   => HDMI_D1_P,
-      DOUT_N   => HDMI_D1_N
-   );
-
-   ser_ch2: entity hdmi_display_v1_00_a.serializer
-   port map
-   (
-      reset    => reset_reg,
-      clk      => PXL_CLK_1X,
-      clk_x5   => PXL_CLK_5X,
-      data     => tmds_red,
-      DOUT_P   => HDMI_D2_P,
-      DOUT_N   => HDMI_D2_N
-   );
-
-   ser_ch3: entity hdmi_display_v1_00_a.serializer
-   port map
-   (
-      reset    => reset_reg,
-      clk      => PXL_CLK_1X,
-      clk_x5   => PXL_CLK_5X,
-      data     => "0000011111",
-      DOUT_P   => HDMI_CLK_P,
-      DOUT_N   => HDMI_CLK_N
    );
 
 end RTL;

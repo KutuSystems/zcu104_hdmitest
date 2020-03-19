@@ -106,19 +106,13 @@ entity hdmi_display is
       fsync                : out std_logic;
 
       -- HDMI output
-      HDMI_CLK_P           : out  std_logic;
-      HDMI_CLK_N           : out  std_logic;
-      HDMI_D2_P            : out  std_logic;
-      HDMI_D2_N            : out  std_logic;
-      HDMI_D1_P            : out  std_logic;
-      HDMI_D1_N            : out  std_logic;
-      HDMI_D0_P            : out  std_logic;
-      HDMI_D0_N            : out  std_logic;
 
       -- debug signals
-      debug_tmds_red       : out std_logic_vector(9 downto 0);
-      debug_tmds_green     : out std_logic_vector(9 downto 0);
-      debug_tmds_blue      : out std_logic_vector(9 downto 0);
+      tmds_red             : out std_logic_vector(9 downto 0);
+      tmds_green           : out std_logic_vector(9 downto 0);
+      tmds_blue            : out std_logic_vector(9 downto 0);
+
+      -- debug signals
       debug_hcount         : out std_logic_vector(11 downto 0);
       debug_vcount         : out std_logic_vector(11 downto 0);
       debug_vga_active     : out std_logic;
@@ -166,7 +160,7 @@ begin
    debug_green    <= green;
    debug_blue     <= blue;
 
-
+    pxl_clk         <= ref_clk;
    s_axis_mm2s_aclk <= pxl_clk;
 
 
@@ -279,12 +273,9 @@ begin
    )
    port map (
       reset             => reset,
-      ref_clk           => ref_clk,
+      clk               => pxl_clk,
 
-      video_clk         => pxl_clk,
-      locked            => locked,
-
-      -- VGA
+      -- VGA input frame
       hsync             => hsync,
       vsync             => vsync,
       de                => de,
@@ -292,18 +283,9 @@ begin
       green             => green,
       blue              => blue,
 
-      debug_tmds_red    => debug_tmds_red,
-      debug_tmds_green  => debug_tmds_green,
-      debug_tmds_blue   => debug_tmds_blue,
-      -- HDMI output
-      HDMI_CLK_P        => HDMI_CLK_P,
-      HDMI_CLK_N        => HDMI_CLK_N,
-      HDMI_D2_P         => HDMI_D2_P,
-      HDMI_D2_N         => HDMI_D2_N,
-      HDMI_D1_P         => HDMI_D1_P,
-      HDMI_D1_N         => HDMI_D1_N,
-      HDMI_D0_P         => HDMI_D0_P,
-      HDMI_D0_N         => HDMI_D0_N
+      tmds_red          => tmds_red,
+      tmds_green        => tmds_green,
+      tmds_blue         => tmds_blue
    );
 
 end RTL;
