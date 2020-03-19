@@ -112,8 +112,8 @@ set bCheckIPs 1
 if { $bCheckIPs == 1 } {
    set list_check_ips "\
 kutu.com.au:kutu:kutu_gpio:1.0\
-kutu.com.au:kutu:kutu_msp430:1.0\
 xilinx.com:ip:proc_sys_reset:5.0\
+xilinx.com:ip:vid_phy_controller:2.2\
 xilinx.com:ip:xlconcat:2.1\
 xilinx.com:ip:xlconstant:1.1\
 xilinx.com:ip:zynq_ultra_ps_e:3.2\
@@ -183,9 +183,13 @@ proc create_root_design { parentCell } {
 
   # Create ports
   set PMOD_1 [ create_bd_port -dir IO -from 7 -to 0 PMOD_1 ]
-  set msp430_debug_led [ create_bd_port -dir O -from 3 -to 0 msp430_debug_led ]
-  set msp_nrst [ create_bd_port -dir IO msp_nrst ]
-  set msp_test [ create_bd_port -dir IO msp_test ]
+  set hdmi_clk_n [ create_bd_port -dir O -type clk hdmi_clk_n ]
+  set hdmi_clk_p [ create_bd_port -dir O -type clk hdmi_clk_p ]
+  set hdmi_refclk_n [ create_bd_port -dir I -type clk hdmi_refclk_n ]
+  set hdmi_refclk_p [ create_bd_port -dir I -type clk hdmi_refclk_p ]
+  set hdmi_refclk_rdy [ create_bd_port -dir I hdmi_refclk_rdy ]
+  set hdmi_tx_n [ create_bd_port -dir O -from 2 -to 0 hdmi_tx_n ]
+  set hdmi_tx_p [ create_bd_port -dir O -from 2 -to 0 hdmi_tx_p ]
 
   # Create instance: kutu_gpio_1, and set properties
   set kutu_gpio_1 [ create_bd_cell -type ip -vlnv kutu.com.au:kutu:kutu_gpio:1.0 kutu_gpio_1 ]
@@ -193,12 +197,6 @@ proc create_root_design { parentCell } {
    CONFIG.C_SYS_ADDR_WIDTH {12} \
    CONFIG.NUM_GPIO {8} \
  ] $kutu_gpio_1
-
-  # Create instance: kutu_msp430_0, and set properties
-  set kutu_msp430_0 [ create_bd_cell -type ip -vlnv kutu.com.au:kutu:kutu_msp430:1.0 kutu_msp430_0 ]
-  set_property -dict [ list \
-   CONFIG.C_SYS_ADDR_WIDTH {12} \
- ] $kutu_msp430_0
 
   # Create instance: ps8_0_axi_periph, and set properties
   set ps8_0_axi_periph [ create_bd_cell -type ip -vlnv xilinx.com:ip:axi_interconnect:2.1 ps8_0_axi_periph ]
@@ -208,6 +206,27 @@ proc create_root_design { parentCell } {
 
   # Create instance: rst_ps8_0_100M, and set properties
   set rst_ps8_0_100M [ create_bd_cell -type ip -vlnv xilinx.com:ip:proc_sys_reset:5.0 rst_ps8_0_100M ]
+
+  # Create instance: vid_phy_controller_0, and set properties
+  set vid_phy_controller_0 [ create_bd_cell -type ip -vlnv xilinx.com:ip:vid_phy_controller:2.2 vid_phy_controller_0 ]
+  set_property -dict [ list \
+   CONFIG.CHANNEL_ENABLE {X0Y16 X0Y17 X0Y18} \
+   CONFIG.CHANNEL_SITE {X0Y16} \
+   CONFIG.C_Rx_No_Of_Channels {3} \
+   CONFIG.C_Rx_Protocol {None} \
+   CONFIG.C_Tx_No_Of_Channels {3} \
+   CONFIG.C_Tx_Protocol {HDMI} \
+   CONFIG.C_Use_Oddr_for_Tmds_Clkout {true} \
+   CONFIG.C_vid_phy_rx_axi4s_ch_TDATA_WIDTH {40} \
+   CONFIG.C_vid_phy_tx_axi4s_ch_INT_TDATA_WIDTH {40} \
+   CONFIG.C_vid_phy_tx_axi4s_ch_TDATA_WIDTH {40} \
+   CONFIG.Rx_GT_Line_Rate {5.94} \
+   CONFIG.Rx_Max_GT_Line_Rate {5.94} \
+   CONFIG.Transceiver_Width {4} \
+   CONFIG.Tx_GT_Line_Rate {5.94} \
+   CONFIG.Tx_GT_Ref_Clock_Freq {297} \
+   CONFIG.Tx_Max_GT_Line_Rate {5.94} \
+ ] $vid_phy_controller_0
 
   # Create instance: xlconcat_0, and set properties
   set xlconcat_0 [ create_bd_cell -type ip -vlnv xilinx.com:ip:xlconcat:2.1 xlconcat_0 ]
@@ -220,6 +239,12 @@ proc create_root_design { parentCell } {
   set_property -dict [ list \
    CONFIG.CONST_VAL {0} \
  ] $xlconstant_0
+
+  # Create instance: xlconstant_1, and set properties
+  set xlconstant_1 [ create_bd_cell -type ip -vlnv xilinx.com:ip:xlconstant:1.1 xlconstant_1 ]
+  set_property -dict [ list \
+   CONFIG.CONST_VAL {1} \
+ ] $xlconstant_1
 
   # Create instance: zynq_ultra_ps_e_0, and set properties
   set zynq_ultra_ps_e_0 [ create_bd_cell -type ip -vlnv xilinx.com:ip:zynq_ultra_ps_e:3.2 zynq_ultra_ps_e_0 ]
@@ -773,25 +798,31 @@ proc create_root_design { parentCell } {
 
   # Create interface connections
   connect_bd_intf_net -intf_net ps8_0_axi_periph_M00_AXI [get_bd_intf_pins kutu_gpio_1/S_AXI_LITE] [get_bd_intf_pins ps8_0_axi_periph/M00_AXI]
-  connect_bd_intf_net -intf_net ps8_0_axi_periph_M01_AXI [get_bd_intf_pins kutu_msp430_0/S_AXI_LITE] [get_bd_intf_pins ps8_0_axi_periph/M01_AXI]
+  connect_bd_intf_net -intf_net ps8_0_axi_periph_M01_AXI [get_bd_intf_pins ps8_0_axi_periph/M01_AXI] [get_bd_intf_pins vid_phy_controller_0/vid_phy_axi4lite]
   connect_bd_intf_net -intf_net zynq_ultra_ps_e_0_M_AXI_HPM0_FPD [get_bd_intf_pins ps8_0_axi_periph/S00_AXI] [get_bd_intf_pins zynq_ultra_ps_e_0/M_AXI_HPM0_FPD]
 
   # Create port connections
   connect_bd_net -net Net1 [get_bd_ports PMOD_1] [get_bd_pins kutu_gpio_1/gpio]
-  connect_bd_net -net Net2 [get_bd_ports msp_nrst] [get_bd_pins kutu_msp430_0/msp_nrst]
-  connect_bd_net -net Net3 [get_bd_ports msp_test] [get_bd_pins kutu_msp430_0/msp_test]
-  connect_bd_net -net kutu_msp430_0_debug_led [get_bd_ports msp430_debug_led] [get_bd_pins kutu_msp430_0/debug_led]
-  connect_bd_net -net kutu_msp430_0_msp_interrupt [get_bd_pins kutu_msp430_0/msp_interrupt] [get_bd_pins xlconcat_0/In7]
+  connect_bd_net -net mgtrefclk1_pad_n_in_0_1 [get_bd_ports hdmi_refclk_n] [get_bd_pins vid_phy_controller_0/mgtrefclk1_pad_n_in]
+  connect_bd_net -net mgtrefclk1_pad_p_in_0_1 [get_bd_ports hdmi_refclk_p] [get_bd_pins vid_phy_controller_0/mgtrefclk1_pad_p_in]
   connect_bd_net -net rst_ps8_0_100M_interconnect_aresetn [get_bd_pins ps8_0_axi_periph/ARESETN] [get_bd_pins rst_ps8_0_100M/interconnect_aresetn]
-  connect_bd_net -net rst_ps8_0_100M_peripheral_aresetn [get_bd_pins kutu_gpio_1/S_AXI_LITE_ARESETN] [get_bd_pins kutu_msp430_0/S_AXI_LITE_ARESETN] [get_bd_pins ps8_0_axi_periph/M00_ARESETN] [get_bd_pins ps8_0_axi_periph/M01_ARESETN] [get_bd_pins ps8_0_axi_periph/S00_ARESETN] [get_bd_pins rst_ps8_0_100M/peripheral_aresetn]
+  connect_bd_net -net rst_ps8_0_100M_peripheral_aresetn [get_bd_pins kutu_gpio_1/S_AXI_LITE_ARESETN] [get_bd_pins ps8_0_axi_periph/M00_ARESETN] [get_bd_pins ps8_0_axi_periph/M01_ARESETN] [get_bd_pins ps8_0_axi_periph/S00_ARESETN] [get_bd_pins rst_ps8_0_100M/peripheral_aresetn] [get_bd_pins vid_phy_controller_0/vid_phy_axi4lite_aresetn] [get_bd_pins vid_phy_controller_0/vid_phy_sb_aresetn]
+  connect_bd_net -net tx_refclk_rdy_0_1 [get_bd_ports hdmi_refclk_rdy] [get_bd_pins vid_phy_controller_0/tx_refclk_rdy]
+  connect_bd_net -net vid_phy_controller_0_irq [get_bd_pins vid_phy_controller_0/irq] [get_bd_pins xlconcat_0/In7]
+  connect_bd_net -net vid_phy_controller_0_phy_txn_out [get_bd_ports hdmi_tx_n] [get_bd_pins vid_phy_controller_0/phy_txn_out]
+  connect_bd_net -net vid_phy_controller_0_phy_txp_out [get_bd_ports hdmi_tx_p] [get_bd_pins vid_phy_controller_0/phy_txp_out]
+  connect_bd_net -net vid_phy_controller_0_tx_tmds_clk_n [get_bd_ports hdmi_clk_n] [get_bd_pins vid_phy_controller_0/tx_tmds_clk_n]
+  connect_bd_net -net vid_phy_controller_0_tx_tmds_clk_p [get_bd_ports hdmi_clk_p] [get_bd_pins vid_phy_controller_0/tx_tmds_clk_p]
+  connect_bd_net -net vid_phy_controller_0_txoutclk [get_bd_pins vid_phy_controller_0/txoutclk] [get_bd_pins vid_phy_controller_0/vid_phy_tx_axi4s_aclk]
   connect_bd_net -net xlconcat_0_dout [get_bd_pins xlconcat_0/dout] [get_bd_pins zynq_ultra_ps_e_0/pl_ps_irq0]
   connect_bd_net -net xlconstant_0_dout [get_bd_pins xlconcat_0/In0] [get_bd_pins xlconcat_0/In1] [get_bd_pins xlconcat_0/In2] [get_bd_pins xlconcat_0/In3] [get_bd_pins xlconcat_0/In4] [get_bd_pins xlconcat_0/In5] [get_bd_pins xlconcat_0/In6] [get_bd_pins xlconstant_0/dout]
-  connect_bd_net -net zynq_ultra_ps_e_0_pl_clk0 [get_bd_pins kutu_gpio_1/S_AXI_LITE_ACLK] [get_bd_pins kutu_msp430_0/S_AXI_LITE_ACLK] [get_bd_pins ps8_0_axi_periph/ACLK] [get_bd_pins ps8_0_axi_periph/M00_ACLK] [get_bd_pins ps8_0_axi_periph/M01_ACLK] [get_bd_pins ps8_0_axi_periph/S00_ACLK] [get_bd_pins rst_ps8_0_100M/slowest_sync_clk] [get_bd_pins zynq_ultra_ps_e_0/maxihpm0_fpd_aclk] [get_bd_pins zynq_ultra_ps_e_0/pl_clk0]
+  connect_bd_net -net xlconstant_1_dout [get_bd_pins vid_phy_controller_0/vid_phy_tx_axi4s_aresetn] [get_bd_pins xlconstant_1/dout]
+  connect_bd_net -net zynq_ultra_ps_e_0_pl_clk0 [get_bd_pins kutu_gpio_1/S_AXI_LITE_ACLK] [get_bd_pins ps8_0_axi_periph/ACLK] [get_bd_pins ps8_0_axi_periph/M00_ACLK] [get_bd_pins ps8_0_axi_periph/M01_ACLK] [get_bd_pins ps8_0_axi_periph/S00_ACLK] [get_bd_pins rst_ps8_0_100M/slowest_sync_clk] [get_bd_pins vid_phy_controller_0/drpclk] [get_bd_pins vid_phy_controller_0/vid_phy_axi4lite_aclk] [get_bd_pins vid_phy_controller_0/vid_phy_sb_aclk] [get_bd_pins zynq_ultra_ps_e_0/maxihpm0_fpd_aclk] [get_bd_pins zynq_ultra_ps_e_0/pl_clk0]
   connect_bd_net -net zynq_ultra_ps_e_0_pl_resetn0 [get_bd_pins rst_ps8_0_100M/ext_reset_in] [get_bd_pins zynq_ultra_ps_e_0/pl_resetn0]
 
   # Create address segments
   create_bd_addr_seg -range 0x00010000 -offset 0x000400010000 [get_bd_addr_spaces zynq_ultra_ps_e_0/Data] [get_bd_addr_segs kutu_gpio_1/S_AXI_LITE/reg0] SEG_kutu_gpio_1_reg0
-  create_bd_addr_seg -range 0x00010000 -offset 0x000400000000 [get_bd_addr_spaces zynq_ultra_ps_e_0/Data] [get_bd_addr_segs kutu_msp430_0/S_AXI_LITE/reg0] SEG_kutu_msp430_0_reg0
+  create_bd_addr_seg -range 0x00010000 -offset 0x000400000000 [get_bd_addr_spaces zynq_ultra_ps_e_0/Data] [get_bd_addr_segs vid_phy_controller_0/vid_phy_axi4lite/Reg] SEG_vid_phy_controller_0_Reg
 
 
   # Restore current instance
@@ -807,3 +838,6 @@ proc create_root_design { parentCell } {
 ##################################################################
 
 create_root_design ""
+
+
+common::send_msg_id "BD_TCL-1000" "WARNING" "This Tcl script was generated from a block design that has not been validated. It is possible that design <$design_name> may result in errors during validation."
