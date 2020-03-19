@@ -109,22 +109,6 @@ set_property taxonomy {{/Kutu}} [ipx::current_core]
 set_property vendor_display_name {Kutu Pty. Ltd.} [ipx::current_core]
 set_property company_url {http://www.kutu.com.au} [ipx::current_core]
 
-set_property supported_families \
-    {{virtex7}    {Production} \
-     {qvirtex7}   {Production} \
-     {kintex7}    {Production} \
-     {kintex7l}   {Production} \
-     {qkintex7}   {Production} \
-     {qkintex7l}  {Production} \
-     {artix7}     {Production} \
-     {artix7l}    {Production} \
-     {aartix7}    {Production} \
-     {qartix7}    {Production} \
-     {zynq}       {Production} \
-     {qzynq}      {Production} \
-     {azynq}      {Production}} \
-  [ipx::current_core]
-
 ipx::remove_bus_interface HDMI_CLK_N [ipx::current_core]
 ipx::remove_bus_interface HDMI_CLK_P [ipx::current_core]
 ipx::remove_bus_interface reset [ipx::current_core]
